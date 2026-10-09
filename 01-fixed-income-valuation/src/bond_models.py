@@ -3,6 +3,9 @@ Bond Valuation and Risk Modeling Module
 Author: Bryan Segovia
 Project: Fixed Income Valuation for Investment Analysis
 Tools: Python, NumPy, Pandas, Matplotlib
+
+Disclaimer: All bond parameters are simulated for educational purposes.
+They do not represent live market quotes from MEF or Bloomberg Terminal.
 """
 
 import numpy as np
@@ -59,7 +62,7 @@ class BondAnalyzer:
         return (convexity_sum / (price * (1 + discount_rate) ** 2)) / (self.frequency ** 2)
     
     def price_sensitivity(self, yield_change_bps):
-        """Estimate price change for a given yield shift in basis points"""
+        """Estimate price change percentage for a given yield shift in basis points"""
         mod_dur = self.modified_duration()
         conv = self.convexity()
         dy = yield_change_bps / 10000
@@ -103,7 +106,7 @@ class BondAnalyzer:
             approx_prices_dur.append(approx_dur)
             approx_prices_dur_conv.append(approx_dur_conv)
             
-        self.ytm = base_ytm # Reset to original
+        self.ytm = base_ytm  # Reset to original
         
         plt.figure(figsize=(10, 6))
         plt.plot(yields * 100, exact_prices, label='Exact Price', linewidth=2, color='blue')
