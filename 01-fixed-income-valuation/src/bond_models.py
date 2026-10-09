@@ -4,8 +4,6 @@ Author: Bryan Segovia
 Project: Fixed Income Valuation for Investment Analysis
 Tools: Python, NumPy, Pandas, Matplotlib
 
-Disclaimer: All bond parameters are simulated for educational purposes.
-They do not represent live market quotes from MEF or Bloomberg Terminal.
 """
 
 import numpy as np
