@@ -9,8 +9,8 @@ Economics & Finance student at UPC (Lima, Peru) specializing in quantitative inv
 ### [01 - Fixed Income Valuation & Risk Modeling](01-fixed-income-valuation/src/bond_models.py)
 Bond pricing models, duration/convexity analysis, and yield curve scenarios using Python. Simulated interest rate shocks and their impact on fixed income portfolios. Includes unit tests and Price-Yield curve visualization.
 
-### [02 - Credit Risk Analysis in SMEs](03-credit-risk-mypes/) *(Coming Soon)*
-Causal impact of labor formality on financial access using ENAHO microdata (35,000+ observations). Probit Bivariante and Propensity Score Matching (PSM) with Rosenbaum sensitivity analysis.
+## [02 - Credit Risk Analysis: Formality & Financial Access](02-credit-risk-formalidad/)
+**Active**. Causal impact of labor formality on financial access using simulated ENAHO data (35,000 obs). Potential outcomes framework with correlated errors (ρ=0.6). Bivariate Probit recovers true latent parameter, PSM estimates ATT, Rosenbaum bounds test sensitivity to unobserved heterogeneity.
 
 ### [03 - Time Series & RBC Models](02-time-series-arima-rbc/) *(Coming Soon)*
 ARMA modeling of financial variables and Real Business Cycle evaluation. Forecasting macroeconomic indicators with confidence intervals.
