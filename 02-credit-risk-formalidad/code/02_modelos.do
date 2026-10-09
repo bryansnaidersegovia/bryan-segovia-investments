@@ -2,7 +2,8 @@
 * 02_modelos.do - Estimación y Comparación con Ground Truth
 * Author: Bryan Segovia
 * ============================================================================
-
+clear all
+set more off
 use "data/simulated_data.dta", clear
 
 display "================================================================"
@@ -10,96 +11,60 @@ display "SECTION 2: ESTIMATION MODELS"
 display "================================================================"
 
 * ----------------------------------------------------------------------------
-* 2.1 Naive Probit (ignora endogeneidad - sesgado)
+* 2.1 Naive Probit
 * ----------------------------------------------------------------------------
-display ""
-display "--- Naive Probit (biased) ---"
 probit financial_access i.formal_labor ln_income education_years age_head i.urban
 estimates store naive_probit
-
-* Marginal effects
-margins, dydx(i.formal_labor ln_income education_years age_head i.urban) predict(pr) post
+margins, dydx(i.formal_labor) predict(pr) post
 estimates store naive_probit_me
+scalar me_naive = _b[1.formal_labor]
 
 * ----------------------------------------------------------------------------
-* 2.2 Bivariate Probit (corrige sesgo de selección)
+* 2.2 Bivariate Probit
 * ----------------------------------------------------------------------------
-display ""
-display "--- Bivariate Probit (corrects selection bias) ---"
 biprobit (financial_access = i.formal_labor ln_income education_years age_head i.urban) ///
          (formal_labor = sunafil_intensity ln_income education_years age_head i.urban)
 estimates store biprobit
 
-* Test de endogeneidad (H0: rho = 0)
 display ""
 display "Endogeneity Test (H0: rho = 0):"
 display "Wald chi2 = " e(chi2_c)
 display "p-value = " e(p_c)
-display "If p < 0.05, selection bias is present and Biprobit is preferred"
 
-* Marginal effects (pmarg1 para ecuación de resultado)
-margins, dydx(i.formal_labor ln_income education_years age_head i.urban) predict(pmarg1) post
+margins, dydx(i.formal_labor) predict(pmarg1) post
 estimates store biprobit_me
+scalar me_biprobit = _b[1.formal_labor]
 
 * ----------------------------------------------------------------------------
-* 2.3 Propensity Score Matching (PSM) - Estimación no paramétrica
+* 2.3 Propensity Score Matching (teffects para errores estándar válidos)
 * ----------------------------------------------------------------------------
-display ""
-display "--- Propensity Score Matching (PSM) ---"
-
-* Propensity score
-logit formal_labor ln_income education_years age_head i.urban i.region
-predict pscore, pr
-
-* Gráfico de soporte común
-kdensity pscore if formal_labor == 1, addplot(kdensity pscore if formal_labor == 0) ///
-    legend(label(1 "Formal") label(2 "Informal")) ///
-    title("Propensity Score Distribution") ///
-    xtitle("Propensity Score") ytitle("Density")
-graph export "outputs/pscore_distribution.png", replace
-
-* PSM con teffects (errores estándar válidos)
 teffects psmatch (financial_access) (formal_labor ln_income education_years age_head i.urban i.region), atet
-estimates store psm_att
+scalar att_psm_te = e(att)
 
-* Balance de covariables
 tebalance summarize
 
 * ----------------------------------------------------------------------------
-* 2.4 COMPARACIÓN CON GROUND TRUTH
+* 2.4 Resumen comparativo (CALCULADO, NO ESCRITO A MANO)
 * ----------------------------------------------------------------------------
 display ""
 display "================================================================"
-display "VALIDATION: Estimated vs True Effects"
+display "RESUMEN COMPARATIVO: Efecto de la Formalidad en Acceso Financiero"
 display "================================================================"
-display ""
-display "True ATT from DGP: " att_true
-display "True ATE from DGP: " ate_true
-display ""
-display "PSM ATT estimate: " _b[ATE]
-display ""
-display "Biprobit recovers the latent coefficient (0.8)"
-display "PSM ATT should be close to true ATT (~0.14)"
-display "Naive Probit will be biased upward"
+display "True ATT (DGP):     " %6.3f att_true
+display "Naive Probit (ME):  " %6.3f me_naive
+display "Biprobit (ME):      " %6.3f me_biprobit
+display "PSM ATT (teffects): " %6.3f att_psm_te
+display "================================================================"
 
-* ----------------------------------------------------------------------------
-* 2.5 Exportar tablas
-* ----------------------------------------------------------------------------
-display ""
-display "--- Exporting Results Tables ---"
-
-* Tabla de coeficientes
+* Exportar tablas
 esttab naive_probit biprobit using "outputs/regression_table.tex", ///
-    star(* 0.1 ** 0.05 *** 0.01) ///
-    b(%9.3f) se(%9.3f) ///
-    title("Table 1: Probit Models - Financial Access") ///
+    star(* 0.1 ** 0.05 *** 0.01) b(%9.3f) se(%9.3f) ///
+    title("Table 1: Probit Models") ///
     label varlabels(1.formal_labor "Formal employment" ln_income "Log income" education_years "Education" age_head "Age" 1.urban "Urban") ///
     replace
 
-* Tabla de efectos marginales
 esttab naive_probit_me biprobit_me using "outputs/marginal_effects.tex", ///
-    star(* 0.1 ** 0.05 *** 0.01) ///
-    b(%9.3f) se(%9.3f) ///
+    star(* 0.1 ** 0.05 *** 0.01) b(%9.3f) se(%9.3f) ///
     title("Table 2: Marginal Effects") ///
     label varlabels(1.formal_labor "Formal employment" ln_income "Log income" education_years "Education" age_head "Age" 1.urban "Urban") ///
     replace
