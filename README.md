@@ -12,11 +12,11 @@ Bond pricing models, duration/convexity analysis, and yield curve scenarios usin
 ## [02 - Credit Risk Analysis: Formality & Financial Access](02-credit-risk-formalidad/)
 **Active**. Causal impact of labor formality on financial access using simulated ENAHO data (35,000 obs). Potential outcomes framework with correlated errors (ρ=0.6). Bivariate Probit recovers true latent parameter, PSM estimates ATT, Rosenbaum bounds test sensitivity to unobserved heterogeneity.
 
-### [03 - Time Series & RBC Models](02-time-series-arima-rbc/) *(Coming Soon)*
-ARMA modeling of financial variables and Real Business Cycle evaluation. Forecasting macroeconomic indicators with confidence intervals.
+## 03 - Financial Analysis & FP&A Projection (Alicorp)
+Automated financial analysis pipeline using real data from the Lima Stock Exchange (BVL). Extracts historical financial statements, calculates key accounting ratios (gross, operating, and net margins), and generates a 3-year projection under pessimistic, base, and optimistic scenarios. Outputs an Excel-ready deliverable for financial committees, reducing manual consolidation time.
 
-### [04 - Investment Memo](04-investment-memo/) *(Coming Soon)*
-Equity research-style investment thesis on Peruvian listed companies, including valuation multiples, catalysts, and bull/base/bear scenarios.
+## 04 - Time Series & RBC Models (Coming Soon)
+ARMA modeling of financial variables and Real Business Cycle evaluation. Forecasting macroeconomic indicators with confidence intervals.
 
 ---
 
