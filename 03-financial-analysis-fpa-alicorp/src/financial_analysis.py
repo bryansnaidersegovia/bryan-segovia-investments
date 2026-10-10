@@ -1,206 +1,295 @@
-"""
-Análisis Financiero y Proyección del Estado de Resultados - Alicorp S.A.A.
-Autor: Bryan Segovia
-Fecha: 2026
+# ============================================================================
+# Análisis Financiero y Proyección FP&A - Alicorp S.A.A.
+# Autor: Bryan Segovia
+# Fecha: 2026
+#
+# Este script automatiza el flujo de trabajo de un analista de FP&A:
+# ingesta datos históricos, calcula ratios de rentabilidad y proyecta el 
+# Estado de Resultados a 3 años bajo distintos escenarios de estrés.
+#
+# NOTA: Los datos de este repositorio son una SIMULACIÓN basada en tendencias 
+# históricas del sector consumo masivo. Para un entorno de producción, 
+# reemplazar el CSV con los EEFF auditados de la SMV.
+# ============================================================================
 
-Este script extrae datos financieros, calcula ratios contables clave 
-y proyecta el Estado de Resultados (Ventas, Utilidad Bruta, Operativa y Neta) 
-a 3 años bajo diferentes escenarios, utilizando el CAGR histórico como base.
-"""
+suppressPackageStartupMessages({
+  library(dplyr)      # Manipulación de datos (el estándar de la industria)
+  library(ggplot2)    # Visualización (gramática de gráficos)
+  library(openxlsx)   # Exportación a Excel (más rápido que xlsx, sin Java)
+  library(readr)      # Lectura de CSVs
+  library(scales)     # Formateo de ejes en ggplot
+  library(tidyr)      # Pivotado de datos
+  library(here)       # Rutas relativas robustas
+})
 
-import yfinance as yf
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-from typing import Tuple
+theme_set(theme_minimal(base_size = 12))
+options(scipen = 999) # Odiamos la notación científica en reportes financieros
 
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (12, 6)
+# Rutas: here() busca la raíz del proyecto, así no importa desde dónde corras el script
+DATA_DIR <- here("data")
+OUTPUT_DIR <- here("output")
 
-BASE_DIR = Path(__file__).parent
-OUTPUT_DIR = BASE_DIR / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
+if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR)
 
-def fetch_data(ticker: str) -> Tuple[pd.DataFrame, bool, str]:
-    """Extrae datos financieros. Retorna (DataFrame, es_real, moneda)."""
-    print(f"[INFO] Intentando extraer datos de {ticker}...")
-    try:
-        empresa = yf.Ticker(ticker)
-        er = empresa.financials
-        
-        if er is None or er.empty:
-            raise ValueError("No se encontraron estados financieros.")
-            
-        # Obtener moneda de forma segura
-        try:
-            moneda = empresa.info.get('financialCurrency') or 'PEN'
-        except Exception:
-            moneda = 'PEN'
-            
-        df_er = er.T
-        df_er.index = pd.to_datetime(df_er.index).year
-        df_er = df_er.sort_index()
-        
-        cols_requeridas = ['Total Revenue', 'Gross Profit', 'Operating Income', 'Net Income']
-        for col in cols_requeridas:
-            if col not in df_er.columns:
-                raise KeyError(f"Columna faltante en los datos: {col}")
-                
-        df_er = df_er.dropna(subset=['Total Revenue'])
-        print(f"[OK] Datos obtenidos exitosamente. Moneda reportada: {moneda}")
-        return df_er, True, moneda
-        
-    except Exception as e:
-        print(f"[AVISO] Yahoo Finance falló o datos incompletos ({e}).")
-        print("[AVISO] USANDO DATOS DE DEMOSTRACION (DEMO). Los resultados no son reales.")
-        
-        df_demo = pd.DataFrame({
-            'Total Revenue': [9200e6, 9500e6, 9800e6, 10100e6],
-            'Gross Profit': [2300e6, 2450e6, 2500e6, 2600e6],
-            'Operating Income': [900e6, 980e6, 1020e6, 1080e6],
-            'Net Income': [650e6, 710e6, 740e6, 790e6]
-        }, index=[2022, 2023, 2024, 2025])
-        
-        return df_demo, False, 'PEN'
+# ============================================================================
+# 1. INGESTA Y VALIDACIÓN DE DATOS
+# ============================================================================
 
-def calculate_ratios(df_er: pd.DataFrame) -> pd.DataFrame:
-    """Calcula ratios financieros clave (sin redondear para mantener precisión en proyecciones)."""
-    df_ratios = pd.DataFrame()
-    df_ratios['Margen Bruto'] = df_er['Gross Profit'] / df_er['Total Revenue']
-    df_ratios['Margen Operativo'] = df_er['Operating Income'] / df_er['Total Revenue']
-    df_ratios['Margen Neto'] = df_er['Net Income'] / df_er['Total Revenue']
-    df_ratios['Crecimiento Ventas (%)'] = df_er['Total Revenue'].pct_change() * 100
-    return df_ratios
+load_financial_data <- function() {
+  # Buscamos el CSV con los EEFF. Si no existe, cargamos un escenario de 
+  # simulación para que el pipeline no se rompa y podamos probar el código.
+  
+  csv_path <- file.path(DATA_DIR, "alicorp_eeff.csv")
+  cat("[INFO] Buscando fuente de datos en:", csv_path, "\n")
+  
+  if (!file.exists(csv_path)) {
+    cat("[INFO] CSV no encontrado. Cargando escenario de SIMULACION para pruebas.\n")
+    df <- data.frame(
+      Anio = 2020:2024,
+      Ventas = c(8350, 9200, 10500, 11200, 11800),
+      Utilidad_Bruta = c(2050, 2300, 2650, 2800, 2950),
+      Utilidad_Operativa = c(750, 900, 1100, 1180, 1250),
+      Utilidad_Neta = c(480, 650, 780, 820, 880)
+    )
+    # Trabajamos todo en millones de soles para mantener los números limpios
+    return(list(data = df, es_simulacion = TRUE, moneda = "PEN"))
+  }
+  
+  df <- read_csv(csv_path, show_col_types = FALSE)
+  
+  # Validación estricta: si faltan columnas clave, mejor fallar ahora que 
+  # entregar un reporte con números erróneos al comité financiero.
+  cols_requeridas <- c("Anio", "Ventas", "Utilidad_Bruta", "Utilidad_Operativa", "Utilidad_Neta")
+  if (!all(cols_requeridas %in% names(df))) {
+    stop("ERROR: El CSV no tiene las columnas requeridas. Revisa el formato.")
+  }
+  
+  # Aseguramos tipos numéricos y limpiamos duplicados de año
+  df <- df %>% 
+    mutate(Anio = as.integer(Anio)) %>%
+    filter(!duplicated(Anio)) %>%
+    arrange(Anio)
+  
+  cat("[OK] Datos cargados exitosamente. Moneda: PEN (Millones de soles)\n")
+  return(list(data = df, es_simulacion = FALSE, moneda = "PEN"))
+}
 
-def project_financials(df_er: pd.DataFrame, df_ratios: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    """Proyecta el Estado de Resultados a 3 años usando CAGR histórico como base."""
-    ultimo_anio = int(df_er.index[-1])
-    anios_proy = [ultimo_anio + i for i in range(1, 4)]
+# ============================================================================
+# 2. CÁLCULO DE RATIOS DE RENTABILIDAD
+# ============================================================================
+
+calculate_ratios <- function(df) {
+  # No redondeamos los márgenes en esta etapa. Si lo hiciéramos, el error de 
+  # redondeo se acumularía en la proyección a 3 años. Lo dejamos en punto 
+  # flotante y solo redondeamos al exportar a Excel para lectura humana.
+  
+  df %>%
+    mutate(
+      Margen_Bruto = Utilidad_Bruta / Ventas,
+      Margen_Operativo = Utilidad_Operativa / Ventas,
+      Margen_Neto = Utilidad_Neta / Ventas,
+      Crecimiento_Ventas = (Ventas / lag(Ventas) - 1) * 100
+    )
+}
+
+# ============================================================================
+# 3. PROYECCIÓN DEL ESTADO DE RESULTADOS (FP&A)
+# ============================================================================
+
+project_financials <- function(df_ratios) {
+  # Proyectamos a 3 años. En lugar de inventar tasas de crecimiento, anclamos 
+  # el "Caso Base" al CAGR histórico real de la empresa. Los escenarios de 
+  # estrés (Pesimista/Optimista) ajustan el CAGR en -3pp y +3pp.
+  
+  ultimo_anio <- max(df_ratios$Anio)
+  anios_proy <- (ultimo_anio + 1):(ultimo_anio + 3)
+  
+  ultima_venta <- df_ratios$Ventas[nrow(df_ratios)]
+  primera_venta <- df_ratios$Ventas[1]
+  num_years <- nrow(df_ratios) - 1
+  
+  # Cálculo del CAGR (Tasa de Crecimiento Anual Compuesta)
+  cagr <- if (num_years > 0 && primera_venta > 0) {
+    (ultima_venta / primera_venta) ^ (1 / num_years) - 1
+  } else {
+    0.05 # Fallback conservador si no hay historial suficiente
+  }
+  
+  cat("[INFO] CAGR histórico calculado:", round(cagr * 100, 2), "%\n")
+  
+  # Definimos los supuestos para los 3 escenarios. 
+  # Nota: El escenario optimista apila crecimiento máximo con márgenes máximos.
+  escenarios <- data.frame(
+    Escenario = c("Pesimista", "Base", "Optimista"),
+    crecimiento = c(max(0, cagr - 0.03), cagr, cagr + 0.03),
+    Margen_Bruto = c(min(df_ratios$Margen_Bruto), mean(df_ratios$Margen_Bruto), max(df_ratios$Margen_Bruto)),
+    Margen_Operativo = c(min(df_ratios$Margen_Operativo), mean(df_ratios$Margen_Operativo), max(df_ratios$Margen_Operativo)),
+    Margen_Neto = c(min(df_ratios$Margen_Neto), mean(df_ratios$Margen_Neto), max(df_ratios$Margen_Neto))
+  )
+  
+  proyecciones <- list()
+  
+  for (i in 1:nrow(escenarios)) {
+    esc <- escenarios[i, ]
+    venta <- ultima_venta
+    filas_esc <- data.frame()
     
-    ultima_venta = float(df_er['Total Revenue'].iloc[-1])
-    primera_venta = float(df_er['Total Revenue'].iloc[0])
-    num_years = len(df_er) - 1
-    
-    # Calcular CAGR histórico para sustentar el caso base
-    if num_years > 0 and primera_venta > 0:
-        cagr = (ultima_venta / primera_venta) ** (1 / num_years) - 1
-    else:
-        cagr = 0.05  # Fallback conservador
-        
-    avg_margen_bruto = float(df_ratios['Margen Bruto'].mean())
-    avg_margen_operativo = float(df_ratios['Margen Operativo'].mean())
-    
-    escenarios = {
-        'Pesimista': {'crecimiento': max(0.0, cagr - 0.03), 'margen_neto': float(df_ratios['Margen Neto'].min())},
-        'Base': {'crecimiento': cagr, 'margen_neto': float(df_ratios['Margen Neto'].mean())},
-        'Optimista': {'crecimiento': cagr + 0.03, 'margen_neto': float(df_ratios['Margen Neto'].max())}
+    for (anio in anios_proy) {
+      venta <- venta * (1 + esc$crecimiento)
+      
+      fila <- data.frame(
+        Escenario = esc$Escenario,
+        Anio = anio,
+        Ventas = venta,
+        Utilidad_Bruta = venta * esc$Margen_Bruto,
+        Utilidad_Operativa = venta * esc$Margen_Operativo,
+        Utilidad_Neta = venta * esc$Margen_Neto
+      )
+      filas_esc <- rbind(filas_esc, fila)
     }
-    
-    filas = []
-    for nombre, p in escenarios.items():
-        venta = ultima_venta
-        for anio in anios_proy:
-            venta *= (1 + p['crecimiento'])
-            utilidad_bruta = venta * avg_margen_bruto
-            utilidad_operativa = venta * avg_margen_operativo
-            utilidad_neta = venta * p['margen_neto']
-            
-            filas.append({
-                'Escenario': nombre, 
-                'Año': anio,
-                'Ventas': round(venta / 1e6, 1),
-                'Utilidad Bruta': round(utilidad_bruta / 1e6, 1),
-                'Utilidad Operativa': round(utilidad_operativa / 1e6, 1),
-                'Utilidad Neta': round(utilidad_neta / 1e6, 1),
-            })
-            
-    return pd.DataFrame(filas), ultimo_anio
+    proyecciones[[esc$Escenario]] <- filas_esc
+  }
+  
+  df_proy <- bind_rows(proyecciones)
+  return(list(data = df_proy, ultimo_anio = ultimo_anio, cagr = cagr))
+}
 
-def generate_plots(df_ratios: pd.DataFrame, df_proyeccion: pd.DataFrame, ultimo_anio: int, es_real: bool, moneda: str):
-    """Genera y guarda visualizaciones."""
-    sufijo = "" if es_real else " [DEMO]"
-    
-    # Gráfico 1: Márgenes
-    fig, ax = plt.subplots()
-    cols_margenes = ['Margen Bruto', 'Margen Operativo', 'Margen Neto']
-    (df_ratios[cols_margenes] * 100).plot(marker='o', ax=ax, linewidth=2)
-    ax.set_title(f'Evolucion de Margenes{sufijo}', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Porcentaje (%)')
-    ax.set_xticks(df_ratios.index)
-    ax.set_xticklabels(df_ratios.index.astype(str))
-    ax.legend(loc='best')
-    plt.tight_layout()
-    plt.savefig(OUTPUT_DIR / f"01_margenes_historicos{'_DEMO' if not es_real else ''}.png", dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Gráfico 2: Proyección con línea de referencia del último año real
-    fig, ax = plt.subplots()
-    for esc in ['Pesimista', 'Base', 'Optimista']:
-        datos = df_proyeccion[df_proyeccion['Escenario'] == esc]
-        ax.plot(datos['Año'], datos['Ventas'], marker='o', label=f"{esc}", linewidth=2)
-        
-    ax.axvline(ultimo_anio, ls='--', color='gray', label=f'{ultimo_anio} (Ultimo real)')
-    ax.set_title(f'Proyeccion de Ventas por Escenario ({moneda} millones){sufijo}', fontsize=14, fontweight='bold')
-    ax.set_ylabel(f'Ventas ({moneda} millones)')
-    ax.set_xticks(list(df_proyeccion['Año']) + [ultimo_anio])
-    ax.legend()
-    plt.tight_layout()
-    plt.savefig(OUTPUT_DIR / f"02_proyeccion_escenarios{'_DEMO' if not es_real else ''}.png", dpi=150, bbox_inches='tight')
-    plt.close()
+# ============================================================================
+# 4. VISUALIZACIÓN (ggplot2)
+# ============================================================================
 
-def export_to_excel(df_er: pd.DataFrame, df_ratios: pd.DataFrame, df_proyeccion: pd.DataFrame, es_real: bool, moneda: str):
-    """Exporta los resultados a un archivo Excel organizado con hoja de metadatos."""
-    sufijo = "_DEMO" if not es_real else ""
-    output_file = OUTPUT_DIR / f"Informe_Financiero{sufijo}.xlsx"
-    
-    df_er.index.name = 'Año'
-    
-    # Crear versión redondeada solo para visualización en Excel
-    df_ratios_display = df_ratios.copy()
-    for col in ['Margen Bruto', 'Margen Operativo', 'Margen Neto', 'Crecimiento Ventas (%)']:
-        if col in df_ratios_display.columns:
-            df_ratios_display[col] = (df_ratios_display[col] * 100).round(2)
-            
-    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        # Hoja de metadatos
-        df_info = pd.DataFrame({
-            'Parametro': ['Fuente de Datos', 'Moneda', 'Fecha de Extraccion', 'Tipo de Datos', 'Ticker'],
-            'Valor': ['Yahoo Finance (SMV/BVL)', moneda, pd.Timestamp.now().strftime('%Y-%m-%d'), 'DEMO' if not es_real else 'REAL', 'ALICORC1.LM']
-        })
-        df_info.to_excel(writer, sheet_name='Info', index=False)
-        
-        df_er.to_excel(writer, sheet_name='ER_Historico')
-        df_ratios_display.to_excel(writer, sheet_name='Ratios')
-        df_proyeccion.to_excel(writer, sheet_name='Proyeccion_ER', index=False)
-        
-    print(f"[OK] Excel generado: {output_file.name}")
+generate_plots <- function(df_ratios, df_proy, ultimo_anio, es_simulacion, moneda) {
+  sufijo <- if (es_simulacion) "_SIMULACION" else ""
+  
+  # Gráfico 1: Evolución de márgenes históricos
+  df_ratios_long <- df_ratios %>%
+    select(Anio, Margen_Bruto, Margen_Operativo, Margen_Neto) %>%
+    tidyr::pivot_longer(cols = -Anio, names_to = "Margen", values_to = "Valor") %>%
+    mutate(Valor = Valor * 100)
+  
+  p1 <- ggplot(df_ratios_long, aes(x = Anio, y = Valor, color = Margen)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    scale_x_continuous(breaks = scales::breaks_width(1)) +
+    labs(
+      title = paste0("Evolución de Márgenes", sufijo),
+      subtitle = "Alicorp S.A.A. (Millones de soles)",
+      x = "Año",
+      y = "Porcentaje (%)",
+      color = "Margen"
+    ) +
+    theme(plot.title = element_text(face = "bold", size = 14))
+  
+  ggsave(file.path(OUTPUT_DIR, paste0("01_margenes_historicos", sufijo, ".png")), 
+         p1, width = 10, height = 6, dpi = 150)
+  cat("[OK] Gráfico de márgenes guardado\n")
+  
+  # Gráfico 2: Proyección de ventas con línea de corte histórico vs futuro
+  p2 <- ggplot() +
+    geom_line(data = df_proy, aes(x = Anio, y = Ventas, color = Escenario, group = Escenario), linewidth = 1) +
+    geom_point(data = df_proy, aes(x = Anio, y = Ventas, color = Escenario), size = 2) +
+    geom_vline(xintercept = ultimo_anio, linetype = "dashed", color = "gray") +
+    annotate("text", x = ultimo_anio + 0.1, y = max(df_proy$Ventas) * 0.95,
+             label = paste0(ultimo_anio, " (Histórico)"), color = "gray", hjust = 0) +
+    scale_x_continuous(breaks = scales::breaks_width(1)) +
+    labs(
+      title = paste0("Proyección de Ventas por Escenario", sufijo),
+      subtitle = paste0("En ", moneda, " millones"),
+      x = "Año",
+      y = paste0("Ventas (", moneda, " millones)"),
+      color = "Escenario"
+    ) +
+    theme(plot.title = element_text(face = "bold", size = 14))
+  
+  ggsave(file.path(OUTPUT_DIR, paste0("02_proyeccion_escenarios", sufijo, ".png")), 
+         p2, width = 10, height = 6, dpi = 150)
+  cat("[OK] Gráfico de proyección guardado\n")
+}
 
-def main():
-    print("=" * 60)
-    print("ANALISIS FINANCIERO Y PROYECCION DEL ESTADO DE RESULTADOS")
-    print("=" * 60)
-    
-    ticker = "ALICORC1.LM"
-    df_er, es_real, moneda = fetch_data(ticker)
-    
-    print("\nCalculando ratios...")
-    df_ratios = calculate_ratios(df_er)
-    print((df_ratios * 100).round(2)) # Mostrar en porcentaje
-    
-    print("\nGenerando proyeccion a 3 años (usando CAGR historico como base)...")
-    df_proyeccion, ultimo_anio = project_financials(df_er, df_ratios)
-    print(df_proyeccion)
-    
-    print("\nGenerando visualizaciones...")
-    generate_plots(df_ratios, df_proyeccion, ultimo_anio, es_real, moneda)
-    
-    print("\nExportando a Excel...")
-    export_to_excel(df_er, df_ratios, df_proyeccion, es_real, moneda)
-    
-    print("\n" + "=" * 60)
-    print("[EXITO] ANALISIS COMPLETADO EXITOSAMENTE")
-    print("=" * 60)
+# ============================================================================
+# 5. EXPORTACIÓN A EXCEL (Entregable para el negocio)
+# ============================================================================
 
-if __name__ == "__main__":
-    main()
+export_to_excel <- function(df_er, df_ratios, df_proy, es_simulacion, moneda, cagr) {
+  sufijo <- if (es_simulacion) "_SIMULACION" else ""
+  output_file <- file.path(OUTPUT_DIR, paste0("Informe_Financiero", sufijo, ".xlsx"))
+  
+  # Preparamos la hoja de ratios redondeada para lectura humana
+  df_ratios_display <- df_ratios %>%
+    mutate(across(starts_with("Margen"), ~ round(. * 100, 2)),
+           Crecimiento_Ventas = round(Crecimiento_Ventas, 2))
+  
+  # Movemos la columna Año al inicio (mejor UX para el usuario final)
+  df_er <- df_er %>% relocate(Anio)
+  df_ratios_display <- df_ratios_display %>% relocate(Anio)
+  
+  wb <- createWorkbook()
+  
+  # Hoja 1: Metadatos del reporte
+  df_info <- data.frame(
+    Parametro = c("Fuente de Datos", "Moneda", "Fecha de Generacion", 
+                  "Tipo de Datos", "Ticker", "CAGR Historico", "Unidad"),
+    Valor = c("CSV local / SMV", moneda, as.character(Sys.Date()),
+              if (es_simulacion) "SIMULACION" else "REAL", "ALICORC1",
+              paste0(round(cagr * 100, 2), "%"), "Millones de soles")
+  )
+  addWorksheet(wb, "Info")
+  writeData(wb, "Info", df_info)
+  
+  # Hojas de datos
+  addWorksheet(wb, "EEFF_Historico")
+  writeData(wb, "EEFF_Historico", df_er)
+  
+  addWorksheet(wb, "Ratios")
+  writeData(wb, "Ratios", df_ratios_display)
+  
+  addWorksheet(wb, "Proyeccion_ER")
+  writeData(wb, "Proyeccion_ER", df_proy)
+  
+  saveWorkbook(wb, output_file, overwrite = TRUE)
+  cat("[OK] Excel generado:", output_file, "\n")
+}
+
+# ============================================================================
+# 6. EJECUCIÓN PRINCIPAL
+# ============================================================================
+
+main <- function() {
+  cat("============================================================\n")
+  cat("ANÁLISIS FINANCIERO Y PROYECCIÓN FP&A (ALICORP)\n")
+  cat("============================================================\n\n")
+  
+  # 1. Ingesta
+  res_data <- load_financial_data()
+  df_er <- res_data$data
+  es_simulacion <- res_data$es_simulacion
+  moneda <- res_data$moneda
+  
+  # 2. Ratios
+  cat("\nCalculando ratios de rentabilidad...\n")
+  df_ratios <- calculate_ratios(df_er)
+  print(df_ratios %>% select(Anio, starts_with("Margen")) %>% 
+          mutate(across(-Anio, ~ round(. * 100, 2))))
+  
+  # 3. Proyección
+  cat("\nGenerando proyección a 3 años (Escenarios de estrés)...\n")
+  res_proy <- project_financials(df_ratios)
+  df_proy <- res_proy$data
+  ultimo_anio <- res_proy$ultimo_anio
+  cagr <- res_proy$cagr
+  
+  # 4. Gráficos
+  cat("\nRenderizando visualizaciones...\n")
+  generate_plots(df_ratios, df_proy, ultimo_anio, es_simulacion, moneda)
+  
+  # 5. Excel
+  cat("\nExportando entregable a Excel...\n")
+  export_to_excel(df_er, df_ratios, df_proy, es_simulacion, moneda, cagr)
+  
+  cat("\n============================================================\n")
+  cat("[EXITO] PIPELINE COMPLETADO SIN ERRORES\n")
+  cat("============================================================\n")
+}
+
+# Correr el pipeline
+main()
